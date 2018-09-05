@@ -81,21 +81,3 @@ otter之前开源的一个子项目，开源链接地址：<a href="http://githu
 <li>阿里巴巴mysql数据库binlog的增量订阅&消费组件：<a href="http://github.com/alibaba/canal">http://github.com/alibaba/canal</a></li>
 <li>阿里巴巴去Oracle数据迁移同步工具(目标支持MySQL/DRDS)：<a href="http://github.com/alibaba/yugong">http://github.com/alibaba/yugong</a></li>
 </ol>
-
-<p> </p>
-<h1>
-<a name="%E9%97%AE%E9%A2%98%E5%8F%8D%E9%A6%88" class="anchor" href="#%E9%97%AE%E9%A2%98%E5%8F%8D%E9%A6%88"><span class="octicon octicon-link"></span></a>问题反馈</h1>
-<h3>
-<a name="%E6%B3%A8%E6%84%8Fcanalotter-qq%E8%AE%A8%E8%AE%BA%E7%BE%A4%E5%B7%B2%E7%BB%8F%E5%BB%BA%E7%AB%8B%E7%BE%A4%E5%8F%B7161559791-%E6%AC%A2%E8%BF%8E%E5%8A%A0%E5%85%A5%E8%BF%9B%E8%A1%8C%E6%8A%80%E6%9C%AF%E8%AE%A8%E8%AE%BA" class="anchor" href="#%E6%B3%A8%E6%84%8Fcanalotter-qq%E8%AE%A8%E8%AE%BA%E7%BE%A4%E5%B7%B2%E7%BB%8F%E5%BB%BA%E7%AB%8B%E7%BE%A4%E5%8F%B7161559791-%E6%AC%A2%E8%BF%8E%E5%8A%A0%E5%85%A5%E8%BF%9B%E8%A1%8C%E6%8A%80%E6%9C%AF%E8%AE%A8%E8%AE%BA"><span class="octicon octicon-link"></span></a>注意：canal&amp;otter QQ讨论群已经建立，群号：161559791 ，欢迎加入进行技术讨论。</h3>
-
-<p>1.  <span>qq交流群： 161559791</span></p>
-<p><span>2.  </span><span>邮件交流： jianghang115@gmail.com</span></p>
-<p><span>3.  </span><span>新浪微博： agapple0002</span></p>
-<p><span>4.  </span><span>报告issue：</span><a href="https://github.com/alibaba/otter/issues">issues</a></p>
-<p> </p>
-<pre>
-【招聘】阿里巴巴中间件团队招聘JAVA高级工程师
-岗位主要为技术型内容(非业务部门)，阿里中间件整个体系对于未来想在技术上有所沉淀的同学还是非常有帮助的
-工作地点：杭州、北京均可. ps. 阿里待遇向来都是不错的，有意者可以QQ、微博私聊. 
-具体招聘内容：https://job.alibaba.com/zhaopin/position_detail.htm?positionId=32666
-</pre>
