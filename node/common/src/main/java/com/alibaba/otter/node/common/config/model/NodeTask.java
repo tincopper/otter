@@ -50,7 +50,7 @@ public class NodeTask implements Serializable {
     /**
      * 任务事件，新增/删除/修改
      */
-    public static enum TaskEvent {
+    public enum TaskEvent {
         CREATE, DELETE;
 
         public boolean isCreate() {
