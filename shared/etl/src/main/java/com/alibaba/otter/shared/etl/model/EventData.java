@@ -110,7 +110,6 @@ public class EventData implements ObjectData, Serializable {
      * 生成对应的hint内容
      */
     private String            hint;
-
     /**
      * 生成sql是否忽略schema,比如针对tddl/drds,需要忽略schema
      */

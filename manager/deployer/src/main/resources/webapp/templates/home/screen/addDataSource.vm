@@ -41,6 +41,7 @@ $control.setTemplate("home:navigation.vm")
             <select id="sourceType" name="$dataMediaSourceGroup.type.key" onchange="changeform();" >
             <option value="MYSQL">MySQL</option>
             <option value="ORACLE">Oracle</option>
+                <option value="HDFS">Hdfs</option>
 			</select><span class="red">*</span>
         </td>
       </tr>

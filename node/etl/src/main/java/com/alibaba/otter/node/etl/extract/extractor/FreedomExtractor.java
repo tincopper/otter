@@ -229,5 +229,9 @@ public class FreedomExtractor extends AbstractExtractor<DbBatch> {
 
         return null;
     }
+    @Override
+    public boolean skip(DbBatch batch) {
+        return false;
+    }
 
 }

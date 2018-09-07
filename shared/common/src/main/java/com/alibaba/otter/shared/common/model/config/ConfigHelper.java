@@ -78,6 +78,19 @@ public class ConfigHelper {
 
         throw new ConfigException("no such DataMedia , the tableId = " + id);
     }
+    /**
+     * 根据DataMedia id得到对应的TargetDataMedia
+     */
+    public static DataMedia<? extends DataMediaSource> findTargetDataMedia(Pipeline pipeline, Long id) {
+        Assert.notNull(pipeline);
+        for (DataMediaPair pair : pipeline.getPairs()) {
+            if (pair.getSource().getId().equals(id)) {
+                return pair.getTarget();
+            }
+        }
+
+        throw new ConfigException("no such DataMedia , the tableId = " + id);
+    }
 
     /**
      * 根据NameSpace和Name得到对应的DataMedia.

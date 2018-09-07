@@ -218,7 +218,7 @@ public class DataMediaSourceServiceImpl implements DataMediaSourceService {
 
         DataMediaSource dataMediaSource = new DbMediaSource();
         try {
-            if (dataMediaSourceDo.getType().isMysql() || dataMediaSourceDo.getType().isOracle()) {
+            if (dataMediaSourceDo.getType().isHdfs() ||dataMediaSourceDo.getType().isMysql() || dataMediaSourceDo.getType().isOracle()) {
                 dataMediaSource = JsonUtils.unmarshalFromString(dataMediaSourceDo.getProperties(), DbMediaSource.class);
             } else if (dataMediaSourceDo.getType().isNapoli() || dataMediaSourceDo.getType().isMq()) {
                 dataMediaSource = JsonUtils.unmarshalFromString(dataMediaSourceDo.getProperties(), MqMediaSource.class);

@@ -138,5 +138,8 @@ public class ProcessorExtractor extends AbstractExtractor<DbBatch> {
     public void setExecutorTemplateGetter(ExecutorTemplateGetter executorTemplateGetter) {
         this.executorTemplateGetter = executorTemplateGetter;
     }
-
+    @Override
+    public boolean skip(DbBatch batch) {
+        return false;
+    }
 }

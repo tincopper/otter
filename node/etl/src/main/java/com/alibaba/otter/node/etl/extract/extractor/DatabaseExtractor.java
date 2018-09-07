@@ -130,8 +130,8 @@ public class DatabaseExtractor extends AbstractExtractor<DbBatch> implements Ini
                 // 针对view视图的情况，会有后续再判断一次
                 flag = checkNeedDbForRowMode(pipeline, eventData);
             }
-
-            if (flag && (eventData.getEventType().isInsert() || eventData.getEventType().isUpdate())) {// 判断是否需要反查
+            flag=eventData.getEventType().isUpdate()&&ConfigHelper.findTargetDataMedia(pipeline,eventData.getTableId()).getSource().getType().isHdfs();
+            if (flag&& (eventData.getEventType().isInsert() || eventData.getEventType().isUpdate())) {// 判断是否需要反查
                 Future future = completionService.submit(new DatabaseExtractWorker(pipeline, item), null); // 提交进行并行查询
                 if (future.isDone()) {
                     // 立即判断一次，因为使用了CallerRun可能当场跑出结果，针对有异常时快速响应，而不是等跑完所有的才抛异常
@@ -184,7 +184,10 @@ public class DatabaseExtractor extends AbstractExtractor<DbBatch> implements Ini
         }
 
     }
-
+    @Override
+    public boolean skip(DbBatch batch) {
+        return false;
+    }
     private boolean checkNeedDbForRowMode(Pipeline pipeline, EventData eventData) {
         // 获取数据表信息
         DataMedia dataMedia = ConfigHelper.findDataMedia(pipeline, eventData.getTableId());
@@ -314,8 +317,9 @@ public class DatabaseExtractor extends AbstractExtractor<DbBatch> implements Ini
                                   || (eventData.getSyncMode() != null && eventData.getSyncMode().isRow());
 
                 // 增加一种case, 针对oracle erosa有时侯结果记录只有主键，没有变更字段，需要做一次反查，获取所有字段
-                needAll |= CollectionUtils.isEmpty(eventData.getUpdatedColumns())
-                           && dataMedia.getSource().getType().isOracle();
+                needAll |= (CollectionUtils.isEmpty(eventData.getUpdatedColumns())
+                           && dataMedia.getSource().getType().isOracle())
+                ||ConfigHelper.findTargetDataMedia(pipeline,eventData.getTableId()).getSource().getType().isHdfs();
 
                 List<DataMediaPair> mediaParis = ConfigHelper.findDataMediaPairByMediaId(pipeline, dataMedia.getId());
                 List<String> viewColumnNames = buildMaxColumnsFromColumnPairs(mediaParis, eventData.getKeys());
@@ -649,6 +653,7 @@ public class DatabaseExtractor extends AbstractExtractor<DbBatch> implements Ini
             }
             return builder.toString();
         }
+
 
     }
 

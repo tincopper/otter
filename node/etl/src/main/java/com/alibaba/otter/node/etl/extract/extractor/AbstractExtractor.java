@@ -21,19 +21,23 @@ import com.alibaba.otter.node.etl.common.db.dialect.DbDialect;
 import com.alibaba.otter.node.etl.common.db.dialect.DbDialectFactory;
 import com.alibaba.otter.shared.common.model.config.ConfigHelper;
 import com.alibaba.otter.shared.common.model.config.data.DataMedia;
+import com.alibaba.otter.shared.common.model.config.data.DataMediaPair;
 import com.alibaba.otter.shared.common.model.config.data.db.DbMediaSource;
 import com.alibaba.otter.shared.common.model.config.pipeline.Pipeline;
+import com.alibaba.otter.shared.etl.model.DbBatch;
+
+import java.util.List;
 
 /**
  * 单条记录处理的extractor
- * 
+ *
  * @author jianghang 2012-4-18 下午04:12:39
  * @version 4.0.2
  */
 public abstract class AbstractExtractor<P> implements OtterExtractor<P> {
 
     protected ConfigClientService configClientService;
-    protected DbDialectFactory    dbDialectFactory;
+    protected DbDialectFactory dbDialectFactory;
 
     protected DbDialect getDbDialect(Long pipelineId, Long tableId) {
         DataMedia dataMedia = ConfigHelper.findDataMedia(getPipeline(pipelineId), tableId);
@@ -54,4 +58,14 @@ public abstract class AbstractExtractor<P> implements OtterExtractor<P> {
         this.dbDialectFactory = dbDialectFactory;
     }
 
+    public boolean skip(DbBatch dbBatch) {
+        Pipeline pipeline = configClientService.findPipeline(dbBatch.getRowBatch().getIdentity().getPipelineId());
+        List<DataMediaPair> dataMediaPairs = pipeline.getPairs();
+        for (DataMediaPair dmp : dataMediaPairs) {
+            if (!dmp.getTarget().getSource().getType().isHdfs()) {
+                return false;
+            }
+        }
+        return true;
+    }
 }

@@ -34,6 +34,8 @@ public enum DataMediaType {
     MQ,
     /** napoli */
     NAPOLI,
+    /** hdfs */
+    HDFS,
     /** diamond push for us */
     DIAMOND_PUSH;
 
@@ -59,6 +61,9 @@ public enum DataMediaType {
 
     public boolean isMq() {
         return this == DataMediaType.MQ;
+    }
+    public boolean isHdfs() {
+        return this == DataMediaType.HDFS;
     }
 
     public boolean isNapoli() {
