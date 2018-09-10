@@ -62,6 +62,7 @@ public enum DataMediaType {
     public boolean isMq() {
         return this == DataMediaType.MQ;
     }
+
     public boolean isHdfs() {
         return this == DataMediaType.HDFS;
     }
