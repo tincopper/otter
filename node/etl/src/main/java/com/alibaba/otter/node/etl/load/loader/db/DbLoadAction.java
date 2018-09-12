@@ -16,45 +16,8 @@
 
 package com.alibaba.otter.node.etl.load.loader.db;
 
-import java.sql.PreparedStatement;
-import java.sql.SQLException;
-import java.sql.Statement;
-import java.sql.Types;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
-
-import org.apache.commons.lang.StringUtils;
-import org.apache.commons.lang.exception.ExceptionUtils;
-import org.apache.ddlutils.model.Column;
-import org.apache.ddlutils.model.Table;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.DisposableBean;
-import org.springframework.beans.factory.InitializingBean;
-import org.springframework.dao.DataAccessException;
-import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.dao.DeadlockLoserDataAccessException;
-import org.springframework.jdbc.core.BatchPreparedStatementSetter;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.PreparedStatementSetter;
-import org.springframework.jdbc.core.StatementCallback;
-import org.springframework.jdbc.core.StatementCreatorUtils;
-import org.springframework.jdbc.support.lob.LobCreator;
-import org.springframework.transaction.TransactionStatus;
-import org.springframework.transaction.support.TransactionCallback;
-import org.springframework.util.Assert;
-import org.springframework.util.CollectionUtils;
-
 import com.alibaba.otter.node.common.config.ConfigClientService;
+import com.alibaba.otter.node.etl.common.datasource.DataSourceService;
 import com.alibaba.otter.node.etl.common.db.dialect.DbDialect;
 import com.alibaba.otter.node.etl.common.db.dialect.DbDialectFactory;
 import com.alibaba.otter.node.etl.common.db.dialect.mysql.MysqlDialect;
@@ -73,13 +36,41 @@ import com.alibaba.otter.shared.common.model.config.channel.Channel;
 import com.alibaba.otter.shared.common.model.config.data.DataMedia;
 import com.alibaba.otter.shared.common.model.config.data.DataMediaPair;
 import com.alibaba.otter.shared.common.model.config.data.db.DbMediaSource;
+import com.alibaba.otter.shared.common.model.config.data.hdfs.HdfsDataSource;
 import com.alibaba.otter.shared.common.model.config.pipeline.Pipeline;
+import com.alibaba.otter.shared.common.utils.hdfs.HDFSUtils;
 import com.alibaba.otter.shared.common.utils.thread.NamedThreadFactory;
-import com.alibaba.otter.shared.etl.model.EventColumn;
-import com.alibaba.otter.shared.etl.model.EventData;
-import com.alibaba.otter.shared.etl.model.EventType;
-import com.alibaba.otter.shared.etl.model.Identity;
-import com.alibaba.otter.shared.etl.model.RowBatch;
+import com.alibaba.otter.shared.etl.model.*;
+import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang.exception.ExceptionUtils;
+import org.apache.commons.lang.time.DateFormatUtils;
+import org.apache.ddlutils.model.Column;
+import org.apache.ddlutils.model.Table;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.DisposableBean;
+import org.springframework.beans.factory.InitializingBean;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DeadlockLoserDataAccessException;
+import org.springframework.jdbc.core.*;
+import org.springframework.jdbc.support.lob.LobCreator;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.util.Assert;
+import org.springframework.util.CollectionUtils;
+
+import java.io.IOException;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.sql.Types;
+import java.text.MessageFormat;
+import java.util.*;
+import java.util.concurrent.*;
+
+import static com.alibaba.otter.node.etl.load.loader.db.HDFSLoadData.ADD_DATA_PATH;
+import static com.alibaba.otter.node.etl.load.loader.db.HDFSLoadData.COLD_DATA_PATH;
 
 /**
  * 数据库load的执行入口
@@ -99,6 +90,7 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
     private LoadInterceptor     interceptor;
     private ExecutorService     executor;
     private DbDialectFactory    dbDialectFactory;
+    private DataSourceService   hdfsDataSourceService;
     private ConfigClientService configClientService;
     private int                 batchSize          = 50;
     private boolean             useBatch           = true;
@@ -350,6 +342,14 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
     private void doDdl(DbLoadContext context, List<EventData> eventDatas) {
         for (final EventData data : eventDatas) {
             DataMedia dataMedia = ConfigHelper.findDataMedia(context.getPipeline(), data.getTableId());
+
+            // for hdfs
+            if (dataMedia.getSource().getType().isHdfs()) {
+                ddlForHdfs(context, data);
+                return ;
+            }
+
+            //for db
             final DbDialect dbDialect = dbDialectFactory.getDbDialect(context.getIdentity().getPipelineId(),
                 (DbMediaSource) dataMedia.getSource());
             Boolean skipDdlException = context.getPipeline().getParameters().getSkipDdlException();
@@ -385,6 +385,33 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
                 }
             }
 
+        }
+    }
+
+    private void ddlForHdfs(DbLoadContext context, EventData data) {
+        //判断是否为truncate操作
+        if (!data.getEventType().isTruncate()) {
+            return ;
+        }
+
+        String path;
+        //判断是否为冷数据
+        if (data.isRemedy()) {
+            path = MessageFormat.format(COLD_DATA_PATH, data.getSchemaName(),
+                    DateFormatUtils.format(new Date(), "yyyyMMdd"), data.getTableName());
+        } else {
+            path = MessageFormat.format(ADD_DATA_PATH, data.getSchemaName(),
+                    DateFormatUtils.format(new Date(), "yyyyMMdd"), data.getTableName());
+        }
+
+        String dataContent = HDFSLoadData.getTruncateData(data.getTableName());
+        //hdfsDataSourceService = OtterContextLocator.getBean("hdfsDataSourceService");
+        final HdfsDataSource dataSource = hdfsDataSourceService.getDataSource(context.getPipeline().getId(),
+                context.getDataMediaSource());
+        try {
+            HDFSUtils.append(dataSource.getFileSystem(), path, dataContent.getBytes());
+        } catch (Exception e) {
+            throw new LoadException("#ERROR load truncate data failuer.", e);
         }
     }
 
@@ -532,8 +559,10 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
 
             EventData data = datas.get(0); // eventData为同一数据库的记录，只取第一条即可
             DataMedia dataMedia = ConfigHelper.findDataMedia(context.getPipeline(), data.getTableId());
-            dbDialect = dbDialectFactory.getDbDialect(context.getIdentity().getPipelineId(),
-                (DbMediaSource) dataMedia.getSource());
+            if (!dataMedia.getSource().getType().isHdfs()) {
+                dbDialect = dbDialectFactory.getDbDialect(context.getIdentity().getPipelineId(),
+                    (DbMediaSource) dataMedia.getSource());
+            }
 
         }
 
@@ -542,10 +571,47 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
                 Thread.currentThread().setName(String.format(WORKER_NAME_FORMAT,
                     context.getPipeline().getId(),
                     context.getPipeline().getName()));
+                DataMedia dataMedia = ConfigHelper.findDataMedia(context.getPipeline(), datas.get(0).getTableId());
+
+                // for hdfs
+                if (dataMedia.getSource().getType().isHdfs()) {
+                    return doHdfsCall();
+                }
+
+                // for db
                 return doCall();
             } finally {
                 Thread.currentThread().setName(WORKER_NAME);
             }
+        }
+
+        private Exception doHdfsCall() {
+            RuntimeException error = null;
+            final HdfsDataSource dataSource = hdfsDataSourceService.getDataSource(context.getPipeline().getId(),
+                    context.getDataMediaSource());
+
+            for (EventData data : datas) {
+                String loadData = HDFSLoadData.prepareDMLLoadData(data);
+                String path;
+                //判断是否为冷数据
+                if (data.isRemedy()) {
+                    path = MessageFormat.format(COLD_DATA_PATH, data.getSchemaName(),
+                            DateFormatUtils.format(new Date(), "yyyyMMdd"), data.getTableName());
+                } else {
+                    path = MessageFormat.format(ADD_DATA_PATH, data.getSchemaName(),
+                            DateFormatUtils.format(new Date(), "yyyyMMdd"), data.getTableName());
+                }
+                try {
+                    HDFSUtils.append(dataSource.getFileSystem(), path, loadData.getBytes());
+                } catch (Exception e) {
+                    throw new LoadException("#ERROR load DML operation data failuer.", e);
+                }
+
+                //统计信息
+                processStat(data, 1, false);
+            }
+
+            return error;
         }
 
         private Exception doCall() {
@@ -895,6 +961,10 @@ public class DbLoadAction implements InitializingBean, DisposableBean {
 
     public void setDbDialectFactory(DbDialectFactory dbDialectFactory) {
         this.dbDialectFactory = dbDialectFactory;
+    }
+
+    public void setHdfsDataSourceService(DataSourceService hdfsDataSourceService) {
+        this.hdfsDataSourceService = hdfsDataSourceService;
     }
 
     public void setConfigClientService(ConfigClientService configClientService) {

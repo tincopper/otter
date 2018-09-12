@@ -105,7 +105,10 @@ public class RowDataTransformer extends AbstractOtterTransformer<EventData, Even
         boolean useTableTransform = context.getPipeline().getParameters().getUseTableTransform();
         boolean enableCompatibleMissColumn = context.getPipeline().getParameters().getEnableCompatibleMissColumn();
         TableInfoHolder tableHolder = null;
-        if (useTableTransform || enableCompatibleMissColumn) {// 控制一下是否需要反查table
+
+        boolean flag=dataMedia.getSource().getType().isHdfs();
+        if (!flag&&(useTableTransform || enableCompatibleMissColumn)) {
+        //if (useTableTransform || enableCompatibleMissColumn) {// 控制一下是否需要反查table
                                                               // meta信息，如果同构数据库，完全没必要反查
             // 获取目标库的表信息
             DbDialect dbDialect = dbDialectFactory.getDbDialect(dataMediaPair.getPipelineId(),

@@ -16,24 +16,6 @@
 
 package com.alibaba.otter.node.etl.load.loader.db;
 
-import java.io.File;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorCompletionService;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
-import org.springframework.beans.BeansException;
-import org.springframework.beans.factory.BeanFactory;
-import org.springframework.beans.factory.BeanFactoryAware;
-import org.springframework.util.CollectionUtils;
-
 import com.alibaba.otter.node.common.config.ConfigClientService;
 import com.alibaba.otter.node.etl.OtterConstants;
 import com.alibaba.otter.node.etl.load.exception.LoadException;
@@ -46,13 +28,22 @@ import com.alibaba.otter.node.etl.load.loader.weight.WeightController;
 import com.alibaba.otter.shared.common.model.config.ConfigHelper;
 import com.alibaba.otter.shared.common.model.config.data.DataMedia;
 import com.alibaba.otter.shared.common.model.config.data.DataMediaSource;
-import com.alibaba.otter.shared.etl.model.DbBatch;
-import com.alibaba.otter.shared.etl.model.EventData;
-import com.alibaba.otter.shared.etl.model.FileBatch;
-import com.alibaba.otter.shared.etl.model.Identity;
-import com.alibaba.otter.shared.etl.model.RowBatch;
+import com.alibaba.otter.shared.etl.model.*;
 import com.google.common.base.Function;
 import com.google.common.collect.OtterMigrateMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
+import org.springframework.beans.BeansException;
+import org.springframework.beans.factory.BeanFactory;
+import org.springframework.beans.factory.BeanFactoryAware;
+import org.springframework.util.CollectionUtils;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.*;
 
 /**
  * 针对RowData的数据载入实现
@@ -192,9 +183,10 @@ public class DataBatchLoader implements OtterLoader<DbBatch, List<LoadContext>>,
                     try {
                         MDC.put(OtterConstants.splitPipelineLogFileKey,
                                 String.valueOf(rowBatch.getIdentity().getPipelineId()));
+
                         // dbLoadAction是一个pool池化对象
                         DbLoadAction dbLoadAction = (DbLoadAction) beanFactory.getBean("dbLoadAction",
-                                                                                       DbLoadAction.class);
+                                DbLoadAction.class);
                         return dbLoadAction.load(rowBatch, controller);
                     } finally {
                         MDC.remove(OtterConstants.splitPipelineLogFileKey);

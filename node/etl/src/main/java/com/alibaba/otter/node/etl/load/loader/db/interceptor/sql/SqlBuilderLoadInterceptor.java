@@ -18,6 +18,8 @@ package com.alibaba.otter.node.etl.load.loader.db.interceptor.sql;
 
 import java.util.List;
 
+import com.alibaba.otter.shared.common.model.config.ConfigHelper;
+import com.alibaba.otter.shared.common.model.config.data.DataMedia;
 import org.springframework.util.CollectionUtils;
 
 import com.alibaba.otter.node.etl.common.db.dialect.DbDialect;
@@ -42,6 +44,12 @@ public class SqlBuilderLoadInterceptor extends AbstractLoadInterceptor<DbLoadCon
     private DbDialectFactory dbDialectFactory;
 
     public boolean before(DbLoadContext context, EventData currentData) {
+
+        DataMedia dataMedia = ConfigHelper.findDataMedia(context.getPipeline(), currentData.getTableId());
+        if (dataMedia.getSource().getType().isHdfs()) {
+            return false;
+        }
+
         // 初步构建sql
         DbDialect dbDialect = dbDialectFactory.getDbDialect(context.getIdentity().getPipelineId(),
             (DbMediaSource) context.getDataMediaSource());

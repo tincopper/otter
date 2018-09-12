@@ -44,6 +44,8 @@
 			</list>
 		</property>
 	</bean>
-	
+
+	<bean id="hdfsDataSourceService" class="com.alibaba.otter.node.etl.common.datasource.impl.HDFSDataSourceService" scope="singleton"/>
+
 	<bean id="mediaPushDataSourceHandler" class="com.alibaba.otter.common.push.datasource.media.MediaPushDataSourceHandler" scope="singleton" />
 </beans>
