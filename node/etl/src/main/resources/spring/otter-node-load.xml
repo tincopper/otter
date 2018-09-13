@@ -13,9 +13,29 @@
 	<bean id="otterLoaderFactory" class="com.alibaba.otter.node.etl.load.loader.OtterLoaderFactory" >
 		<property name="dataBatchLoader" ref="dataBatchLoader" />
 	</bean>
-	<bean id="dataBatchLoader" class="com.alibaba.otter.node.etl.load.loader.db.DataBatchLoader">
+	<bean id="dataBatchLoader" class="com.alibaba.otter.node.etl.load.loader.common.DataBatchLoader">
 		<property name="dbInterceptor" ref="dbLoadInterceptor" />
 	</bean>
+
+	<bean id="hdfsLoadAction" class="org.springframework.aop.framework.ProxyFactoryBean">
+		<property name="optimize" value="false"/>
+		<property name="proxyTargetClass" value="true" />
+		<property name="targetSource" ref="hdfsLoadActionTargetSource" />
+	</bean>
+	<bean id="hdfsLoadActionTargetSource" class="org.springframework.aop.target.CommonsPoolTargetSource" >
+		<property name="minIdle" value="1" />
+		<property name="maxSize" value="-1" />
+		<property name="timeBetweenEvictionRunsMillis" value="60000" /><!-- 1分钟进行一次回收 -->
+		<property name="minEvictableIdleTimeMillis" value="600000" /><!-- 10分钟回收空闲的 -->
+		<property name="targetBeanName" value="hdfsLoadActionTarget" />
+	</bean>
+	<bean id="hdfsLoadActionTarget" class="com.alibaba.otter.node.etl.load.loader.hdfs.HdfsLoadAction" scope="prototype">
+		<property name="retry" value="3" />
+		<property name="retryWait" value="3000" />
+		<property name="poolSize" value="5" />
+		<property name="interceptor" ref="hdfsLoadInterceptor" />
+	</bean>
+
 	<bean id="dbLoadAction" class="org.springframework.aop.framework.ProxyFactoryBean">
 		<property name="optimize" value="false"/>
    		<property name="proxyTargetClass" value="true" />
@@ -53,6 +73,15 @@
 	</bean>
 	
 	<!-- interceptor -->
+
+    <bean id="hdfsLoadInterceptor" class="com.alibaba.otter.node.etl.load.loader.interceptor.ChainLoadInterceptor" >
+        <property name="interceptors">
+            <list>
+                <ref bean="operationInterceptorFactory" />
+            </list>
+        </property>
+    </bean>
+
 	<bean id="dbLoadInterceptor" class="com.alibaba.otter.node.etl.load.loader.interceptor.ChainLoadInterceptor" >
 		<property name="interceptors">
 			<list>
@@ -62,7 +91,7 @@
 			</list>
 		</property>
 	</bean>
-	
+
 	<bean id="dbLogLoadInterceptor" class="com.alibaba.otter.node.etl.load.loader.db.interceptor.log.LogLoadInterceptor">
 		<property name="dump" value="true" />
 	</bean>

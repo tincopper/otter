@@ -1,19 +1,22 @@
-package com.alibaba.otter.node.etl.load.loader.db;
+package com.alibaba.otter.node.etl.load.loader.hdfs;
 
 import com.alibaba.fastjson.JSONObject;
 import com.alibaba.otter.node.etl.load.exception.LoadException;
 import com.alibaba.otter.shared.etl.model.EventColumn;
 import com.alibaba.otter.shared.etl.model.EventData;
 import com.alibaba.otter.shared.etl.model.EventType;
+import org.apache.commons.lang.time.DateFormatUtils;
 
+import java.text.MessageFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 
 /**
  * hdfs load operation
  * @author tangzhongyuan 2018-09-10 16:58
  **/
-public class HDFSLoadData {
+public class HdfsLoadDataUtil {
     
     /**
      * 冷数据存储路径
@@ -34,7 +37,7 @@ public class HDFSLoadData {
     /**
      * 约定的文件分隔符
      */
-    private static final String LINE_BREAK = "\001\002\n";
+    private static final String SEP = "\001\002\n";
 
     private static final String TRUNCATE = "truncate";
     private static final String UPDATE = "update";
@@ -47,7 +50,7 @@ public class HDFSLoadData {
         truncate.put(TRUNCATE, table);
         table.put("timestamp", System.currentTimeMillis());
         table.put("table", tableName);
-        return truncate.toJSONString() + LINE_BREAK;
+        return truncate.toJSONString() + SEP;
     }
 
     private static String getInsertData(List<EventColumn> columns) {
@@ -70,7 +73,7 @@ public class HDFSLoadData {
         for (EventColumn column : columns) {
             table.put(column.getColumnName(), column.getColumnValue());
         }
-        return root.toJSONString() + LINE_BREAK;
+        return root.toJSONString() + SEP;
     }
 
     public static String prepareDMLLoadData(EventData data) {
@@ -96,5 +99,15 @@ public class HDFSLoadData {
         }
 
         throw new LoadException("# ERROR not found this event type", type.getValue());
+    }
+
+    public static String coldDataLoadPath(EventData data) {
+        return MessageFormat.format(COLD_DATA_PATH, data.getSchemaName(),
+                DateFormatUtils.format(new Date(), "yyyyMMdd"), data.getTableName());
+    }
+
+    public static String addDataLoadPath(EventData data) {
+        return MessageFormat.format(ADD_DATA_PATH, data.getSchemaName(),
+                DateFormatUtils.format(new Date(), "yyyyMMdd"), data.getTableName());
     }
 }

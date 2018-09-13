@@ -21,12 +21,12 @@ import java.util.Collection;
 import java.util.Date;
 import java.util.List;
 
+import com.alibaba.otter.node.etl.load.loader.common.DataBatchLoader;
 import org.springframework.util.CollectionUtils;
 
 import com.alibaba.otter.node.common.statistics.StatisticsClientService;
 import com.alibaba.otter.node.etl.load.loader.LoadStatsTracker.LoadCounter;
 import com.alibaba.otter.node.etl.load.loader.LoadStatsTracker.LoadThroughput;
-import com.alibaba.otter.node.etl.load.loader.db.DataBatchLoader;
 import com.alibaba.otter.shared.common.model.statistics.table.TableStat;
 import com.alibaba.otter.shared.common.model.statistics.throughput.ThroughputStat;
 import com.alibaba.otter.shared.common.model.statistics.throughput.ThroughputType;
@@ -41,7 +41,7 @@ import com.alibaba.otter.shared.etl.model.Identity;
  */
 public class OtterLoaderFactory {
 
-    private DataBatchLoader         dataBatchLoader;
+    private DataBatchLoader dataBatchLoader;
     private LoadStatsTracker        loadStatsTracker;
     private StatisticsClientService statisticsClientService;
 

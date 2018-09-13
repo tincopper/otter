@@ -14,20 +14,24 @@
  * limitations under the License.
  */
 
-package com.alibaba.otter.node.etl.load.loader.db;
+package com.alibaba.otter.node.etl.load.loader.common;
 
 import com.alibaba.otter.node.common.config.ConfigClientService;
 import com.alibaba.otter.node.etl.OtterConstants;
 import com.alibaba.otter.node.etl.load.exception.LoadException;
+import com.alibaba.otter.node.etl.load.loader.AbstractLoadAction;
+import com.alibaba.otter.node.etl.load.loader.AbstractLoadContext;
 import com.alibaba.otter.node.etl.load.loader.LoadContext;
 import com.alibaba.otter.node.etl.load.loader.OtterLoader;
-import com.alibaba.otter.node.etl.load.loader.db.context.DbLoadContext;
+import com.alibaba.otter.node.etl.load.loader.db.FileLoadAction;
 import com.alibaba.otter.node.etl.load.loader.db.context.FileLoadContext;
 import com.alibaba.otter.node.etl.load.loader.interceptor.LoadInterceptor;
 import com.alibaba.otter.node.etl.load.loader.weight.WeightController;
 import com.alibaba.otter.shared.common.model.config.ConfigHelper;
 import com.alibaba.otter.shared.common.model.config.data.DataMedia;
 import com.alibaba.otter.shared.common.model.config.data.DataMediaSource;
+import com.alibaba.otter.shared.common.model.config.data.DataMediaType;
+import com.alibaba.otter.shared.common.model.config.pipeline.Pipeline;
 import com.alibaba.otter.shared.etl.model.*;
 import com.google.common.base.Function;
 import com.google.common.collect.OtterMigrateMap;
@@ -35,8 +39,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.beans.BeansException;
-import org.springframework.beans.factory.BeanFactory;
-import org.springframework.beans.factory.BeanFactoryAware;
+import org.springframework.beans.factory.InitializingBean;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.ApplicationContextAware;
 import org.springframework.util.CollectionUtils;
 
 import java.io.File;
@@ -51,13 +56,15 @@ import java.util.concurrent.*;
  * @author jianghang 2011-10-27 上午11:15:48
  * @version 4.0.0
  */
-public class DataBatchLoader implements OtterLoader<DbBatch, List<LoadContext>>, BeanFactoryAware {
+public class DataBatchLoader implements OtterLoader<DbBatch, List<LoadContext>>, ApplicationContextAware, InitializingBean {
 
     private static final Logger logger = LoggerFactory.getLogger(DataBatchLoader.class);
     private ExecutorService     executorService;
-    private BeanFactory         beanFactory;
+    private ApplicationContext  context;
     private ConfigClientService configClientService;
     private LoadInterceptor     dbInterceptor;
+
+    private final ConcurrentHashMap<DataMediaType, AbstractLoadAction> actionCache = new ConcurrentHashMap<DataMediaType, AbstractLoadAction>();
 
     public List<LoadContext> load(DbBatch data) {
         final RowBatch rowBatch = data.getRowBatch();
@@ -114,10 +121,15 @@ public class DataBatchLoader implements OtterLoader<DbBatch, List<LoadContext>>,
                 if (future.isDone()) {
                     try {
                         LoadContext loadContext = (LoadContext) future.get();
+                        dbInterceptor.error(loadContext); // 做一下出错处理，记录到store中
 
-                        if (loadContext instanceof DbLoadContext) {
+                        /*if (loadContext instanceof DbLoadContext) {
                             dbInterceptor.error((DbLoadContext) loadContext);// 做一下出错处理，记录到store中
                         }
+
+                        if (loadContext instanceof HdfsLoadContext) {
+                            dbInterceptor.error((HdfsLoadContext) loadContext);// 做一下出错处理，记录到store中
+                        }*/
                     } catch (InterruptedException e) {
                         // ignore
                     } catch (ExecutionException e) {
@@ -135,10 +147,15 @@ public class DataBatchLoader implements OtterLoader<DbBatch, List<LoadContext>>,
                 Future future = futures.get(i);
                 try {
                     LoadContext loadContext = (LoadContext) future.get();
+                    processedContexts.add(loadContext);
 
-                    if (loadContext instanceof DbLoadContext) {
+                    /*if (loadContext instanceof DbLoadContext) {
                         processedContexts.add((DbLoadContext) loadContext);
                     }
+
+                    if (loadContext instanceof HdfsLoadContext) {
+                        processedContexts.add((HdfsLoadContext) loadContext);
+                    }*/
                 } catch (InterruptedException e) {
                     // ignore
                 } catch (ExecutionException e) {
@@ -163,8 +180,7 @@ public class DataBatchLoader implements OtterLoader<DbBatch, List<LoadContext>>,
                     MDC.put(OtterConstants.splitPipelineLogFileKey,
                             String.valueOf(fileBatch.getIdentity().getPipelineId()));
 
-                    FileLoadAction fileLoadAction = (FileLoadAction) beanFactory.getBean("fileLoadAction",
-                                                                                         FileLoadAction.class);
+                    FileLoadAction fileLoadAction = context.getBean("fileLoadAction", FileLoadAction.class);
                     return fileLoadAction.load(fileBatch, rootDir, controller);
                 } finally {
                     MDC.remove(OtterConstants.splitPipelineLogFileKey);
@@ -177,17 +193,27 @@ public class DataBatchLoader implements OtterLoader<DbBatch, List<LoadContext>>,
                                 final List<RowBatch> rowBatchs, final WeightController controller) {
         for (final RowBatch rowBatch : rowBatchs) {
             // 提交多个并行加载通道
-            futures.add(completionService.submit(new Callable<DbLoadContext>() {
+            futures.add(completionService.submit(new Callable<AbstractLoadContext>() {
 
-                public DbLoadContext call() throws Exception {
+                public AbstractLoadContext call() throws Exception {
                     try {
                         MDC.put(OtterConstants.splitPipelineLogFileKey,
                                 String.valueOf(rowBatch.getIdentity().getPipelineId()));
 
-                        // dbLoadAction是一个pool池化对象
-                        DbLoadAction dbLoadAction = (DbLoadAction) beanFactory.getBean("dbLoadAction",
-                                DbLoadAction.class);
-                        return dbLoadAction.load(rowBatch, controller);
+                        Pipeline pipeline = configClientService.findPipeline(rowBatch.getIdentity().getPipelineId());
+                        // 因为所有的数据在DbBatchLoader已按照DateMediaSource进行归好类，不同数据源介质会有不同的DbLoadAction进行处理
+                        // 设置media source时，只需要取第一节点的source即可
+                        long tableId = rowBatch.getDatas().get(0).getTableId();
+                        DataMedia dataMedia = ConfigHelper.findDataMedia(pipeline, tableId);
+
+                        //获取当前数据源类型的loadAction
+                        DataMediaType type = dataMedia.getSource().getType();
+                        AbstractLoadAction abstractLoadAction = actionCache.get(type);
+                        if (abstractLoadAction != null) {
+                            return abstractLoadAction.load(rowBatch, controller);
+                        }
+
+                        throw new LoadException(type.name(), "not found load action to load data.");
                     } finally {
                         MDC.remove(OtterConstants.splitPipelineLogFileKey);
                     }
@@ -220,8 +246,22 @@ public class DataBatchLoader implements OtterLoader<DbBatch, List<LoadContext>>,
         return new ArrayList<RowBatch>(result.values());
     }
 
-    public void setBeanFactory(BeanFactory beanFactory) throws BeansException {
-        this.beanFactory = beanFactory;
+    @Override
+    public void afterPropertiesSet() throws Exception {
+        Map<String, AbstractLoadAction> actions = context.getBeansOfType(AbstractLoadAction.class);
+        for (AbstractLoadAction action : actions.values()) {
+            LoadAction annotation = action.getClass().getAnnotation(LoadAction.class);
+            if (annotation == null) {
+                continue;
+            }
+            String actionName = annotation.actionName();
+            DataMediaType[] dataMediaTypes = annotation.mediaType();
+            if (actions.containsKey(actionName)) {
+                for (int i = 0; i < dataMediaTypes.length; i++) {
+                    actionCache.put(dataMediaTypes[i], action);
+                }
+            }
+        }
     }
 
     public void setExecutorService(ExecutorService executorService) {
@@ -234,6 +274,11 @@ public class DataBatchLoader implements OtterLoader<DbBatch, List<LoadContext>>,
 
     public void setDbInterceptor(LoadInterceptor dbInterceptor) {
         this.dbInterceptor = dbInterceptor;
+    }
+
+    @Override
+    public void setApplicationContext(ApplicationContext applicationContext) throws BeansException {
+        this.context = applicationContext;
     }
 
 }
