@@ -22,6 +22,7 @@ import com.alibaba.otter.node.etl.common.db.dialect.mysql.MysqlDialect;
 import com.alibaba.otter.node.etl.common.db.utils.SqlUtils;
 import com.alibaba.otter.node.etl.load.exception.LoadException;
 import com.alibaba.otter.node.etl.load.loader.AbstractLoadAction;
+import com.alibaba.otter.node.etl.load.loader.common.AbstractLoadWorker;
 import com.alibaba.otter.node.etl.load.loader.common.DataLoadContext;
 import com.alibaba.otter.node.etl.load.loader.common.LoadAction;
 import com.alibaba.otter.node.etl.load.loader.common.LoadDataFilter;
@@ -57,7 +58,6 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.util.*;
-import java.util.concurrent.Callable;
 import java.util.concurrent.Future;
 
 /**
@@ -211,8 +211,8 @@ public class DbLoadAction extends AbstractLoadAction {
     /**
      * 执行ddl的调用，处理逻辑比较简单: 串行调用
      *
-     * @param context
-     * @param eventDatas
+     * @param context 数据load处理上下文
+     * @param eventDatas load事件数据
      */
     private void doDdlLocal(DbLoadContext context, List<EventData> eventDatas) {
         for (final EventData data : eventDatas) {
@@ -269,7 +269,7 @@ public class DbLoadAction extends AbstractLoadAction {
             results.add(executor.submit(new DbLoadWorker(context, rows, canBatch)));
         }
 
-        if (true == isPartFailed(context, totalRows, results)) {
+        if (isPartFailed(context, totalRows, results)) {
             // if (CollectionUtils.isEmpty(context.getFailedDatas())) {
             // logger.error("##load phase one failed but failedDatas is empty!");
             // return;
@@ -308,20 +308,12 @@ public class DbLoadAction extends AbstractLoadAction {
         executor.shutdownNow();
     }
 
-    enum ExecuteResult {
-        SUCCESS, ERROR, RETRY
-    }
-
-    class DbLoadWorker implements Callable<Exception> {
+    class DbLoadWorker extends AbstractLoadWorker {
 
         private DbLoadContext   context;
         private DbDialect       dbDialect;
         private List<EventData> datas;
         private boolean         canBatch;
-        private List<EventData> allFailedDatas   = new ArrayList<EventData>();
-        private List<EventData> allProcesedDatas = new ArrayList<EventData>();
-        private List<EventData> processedDatas   = new ArrayList<EventData>();
-        private List<EventData> failedDatas      = new ArrayList<EventData>();
 
         public DbLoadWorker(DbLoadContext context, List<EventData> datas, boolean canBatch) {
             this.context = context;
@@ -334,177 +326,106 @@ public class DbLoadAction extends AbstractLoadAction {
                     (DbMediaSource) dataMedia.getSource());
         }
 
+        @Override
         public Exception call() throws Exception {
             try {
                 Thread.currentThread().setName(String.format(WORKER_NAME_FORMAT,
                         context.getPipeline().getId(),
                         context.getPipeline().getName()));
-                return doCall();
+                return doCall(context, datas, useBatch, canBatch, batchSize, retry, retryWait);
             } finally {
                 Thread.currentThread().setName(WORKER_NAME);
             }
         }
 
-        private Exception doCall() {
-            RuntimeException error = null;
-            ExecuteResult exeResult = null;
-            int index = 0;// 记录下处理成功的记录下标
-            for (; index < datas.size();) {
-                // 处理数据切分
-                final List<EventData> splitDatas = new ArrayList<EventData>();
+        @Override
+        public Map<ExecuteResult, LoadException> doCustomCall(final List<EventData> splitDatas) {
+
+            Map<ExecuteResult, LoadException> result = new HashMap<ExecuteResult, LoadException>();
+
+            try {
+                final LobCreator lobCreator = dbDialect.getLobHandler().getLobCreator();
                 if (useBatch && canBatch) {
-                    int end = (index + batchSize > datas.size()) ? datas.size() : (index + batchSize);
-                    splitDatas.addAll(datas.subList(index, end));
-                    index = end;// 移动到下一批次
-                } else {
-                    splitDatas.add(datas.get(index));
-                    index = index + 1;// 移动到下一条
-                }
+                    // 处理batch
+                    final String sql = splitDatas.get(0).getSql();
+                    int[] affects = new int[splitDatas.size()];
+                    affects = (int[]) dbDialect.getTransactionTemplate().execute(new TransactionCallback() {
 
-                int retryCount = 0;
-                while (true) {
-                    try {
-                        if (CollectionUtils.isEmpty(failedDatas) == false) {
-                            splitDatas.clear();
-                            splitDatas.addAll(failedDatas); // 下次重试时，只处理错误的记录
-                        } else {
-                            failedDatas.addAll(splitDatas); // 先添加为出错记录，可能获取lob,datasource会出错
-                        }
-
-                        final LobCreator lobCreator = dbDialect.getLobHandler().getLobCreator();
-                        if (useBatch && canBatch) {
-                            // 处理batch
-                            final String sql = splitDatas.get(0).getSql();
-                            int[] affects = new int[splitDatas.size()];
-                            affects = (int[]) dbDialect.getTransactionTemplate().execute(new TransactionCallback() {
-
-                                public Object doInTransaction(TransactionStatus status) {
-                                    // 初始化一下内容
-                                    try {
-                                        failedDatas.clear(); // 先清理
-                                        processedDatas.clear();
-                                        interceptor.transactionBegin(context, splitDatas, dbDialect);
-                                        JdbcTemplate template = dbDialect.getJdbcTemplate();
-                                        int[] affects = template.batchUpdate(sql, new BatchPreparedStatementSetter() {
-
-                                            public void setValues(PreparedStatement ps, int idx) throws SQLException {
-                                                doPreparedStatement(ps, dbDialect, lobCreator, splitDatas.get(idx));
-                                            }
-
-                                            public int getBatchSize() {
-                                                return splitDatas.size();
-                                            }
-                                        });
-                                        interceptor.transactionEnd(context, splitDatas, dbDialect);
-                                        return affects;
-                                    } finally {
-                                        lobCreator.close();
-                                    }
-                                }
-
-                            });
-
-                            // 更新统计信息
-                            for (int i = 0; i < splitDatas.size(); i++) {
-                                processStat(splitDatas.get(i), affects[i], true);
-                            }
-                        } else {
-                            final EventData data = splitDatas.get(0);// 直接取第一条
-                            int affect = 0;
-                            affect = (Integer) dbDialect.getTransactionTemplate().execute(new TransactionCallback() {
-
-                                public Object doInTransaction(TransactionStatus status) {
-                                    try {
-                                        failedDatas.clear(); // 先清理
-                                        processedDatas.clear();
-                                        interceptor.transactionBegin(context, Arrays.asList(data), dbDialect);
-                                        JdbcTemplate template = dbDialect.getJdbcTemplate();
-                                        int affect = template.update(data.getSql(), new PreparedStatementSetter() {
-
-                                            public void setValues(PreparedStatement ps) throws SQLException {
-                                                doPreparedStatement(ps, dbDialect, lobCreator, data);
-                                            }
-                                        });
-                                        interceptor.transactionEnd(context, Arrays.asList(data), dbDialect);
-                                        return affect;
-                                    } finally {
-                                        lobCreator.close();
-                                    }
-                                }
-                            });
-                            // 更新统计信息
-                            processStat(data, affect, false);
-                        }
-
-                        error = null;
-                        exeResult = ExecuteResult.SUCCESS;
-                    } catch (DeadlockLoserDataAccessException ex) {
-                        error = new LoadException(ExceptionUtils.getFullStackTrace(ex),
-                                DbLoadDumper.dumpEventDatas(splitDatas));
-                        exeResult = ExecuteResult.RETRY;
-                    } catch (DataIntegrityViolationException ex) {
-                        error = new LoadException(ExceptionUtils.getFullStackTrace(ex),
-                                DbLoadDumper.dumpEventDatas(splitDatas));
-                        // if (StringUtils.contains(ex.getMessage(),
-                        // "ORA-00001")) {
-                        // exeResult = ExecuteResult.RETRY;
-                        // } else {
-                        // exeResult = ExecuteResult.ERROR;
-                        // }
-                        exeResult = ExecuteResult.ERROR;
-                    } catch (RuntimeException ex) {
-                        error = new LoadException(ExceptionUtils.getFullStackTrace(ex),
-                                DbLoadDumper.dumpEventDatas(splitDatas));
-                        exeResult = ExecuteResult.ERROR;
-                    } catch (Throwable ex) {
-                        error = new LoadException(ExceptionUtils.getFullStackTrace(ex),
-                                DbLoadDumper.dumpEventDatas(splitDatas));
-                        exeResult = ExecuteResult.ERROR;
-                    }
-
-                    if (ExecuteResult.SUCCESS == exeResult) {
-                        allFailedDatas.addAll(failedDatas);// 记录一下异常到all记录中
-                        allProcesedDatas.addAll(processedDatas);
-                        failedDatas.clear();// 清空上一轮的处理
-                        processedDatas.clear();
-                        break; // do next eventData
-                    } else if (ExecuteResult.RETRY == exeResult) {
-                        retryCount = retryCount + 1;// 计数一次
-                        // 出现异常，理论上当前的批次都会失败
-                        processedDatas.clear();
-                        failedDatas.clear();
-                        failedDatas.addAll(splitDatas);
-                        if (retryCount >= retry) {
-                            processFailedDatas(index);// 重试已结束，添加出错记录并退出
-                            throw new LoadException(String.format("execute [%s] retry %s times failed",
-                                    context.getIdentity().toString(),
-                                    retryCount), error);
-                        } else {
+                        public Object doInTransaction(TransactionStatus status) {
+                            // 初始化一下内容
                             try {
-                                int wait = retryCount * retryWait;
-                                wait = (wait < retryWait) ? retryWait : wait;
-                                Thread.sleep(wait);
-                            } catch (InterruptedException ex) {
-                                Thread.interrupted();
-                                processFailedDatas(index);// 局部处理出错了
-                                throw new LoadException(ex);
+                                interceptor.transactionBegin(context, splitDatas, dbDialect);
+                                JdbcTemplate template = dbDialect.getJdbcTemplate();
+                                int[] affects = template.batchUpdate(sql, new BatchPreparedStatementSetter() {
+
+                                    public void setValues(PreparedStatement ps, int idx) throws SQLException {
+                                        doPreparedStatement(ps, dbDialect, lobCreator, splitDatas.get(idx));
+                                    }
+
+                                    public int getBatchSize() {
+                                        return splitDatas.size();
+                                    }
+                                });
+                                interceptor.transactionEnd(context, splitDatas, dbDialect);
+                                return affects;
+                            } finally {
+                                lobCreator.close();
                             }
                         }
-                    } else {
-                        // 出现异常，理论上当前的批次都会失败
-                        processedDatas.clear();
-                        failedDatas.clear();
-                        failedDatas.addAll(splitDatas);
-                        processFailedDatas(index);// 局部处理出错了
-                        throw error;
-                    }
-                }
-            }
 
-            // 记录一下当前处理过程中失败的记录,affect = 0的记录
-            context.getFailedDatas().addAll(allFailedDatas);
-            context.getProcessedDatas().addAll(allProcesedDatas);
-            return null;
+                    });
+
+                    // 更新统计信息
+                    for (int i = 0; i < splitDatas.size(); i++) {
+                        processStat(context, splitDatas.get(i), affects[i], true);
+                    }
+                } else {
+                    final EventData data = splitDatas.get(0);// 直接取第一条
+                    int affect = 0;
+                    affect = (Integer) dbDialect.getTransactionTemplate().execute(new TransactionCallback() {
+
+                        public Object doInTransaction(TransactionStatus status) {
+                            try {
+                                interceptor.transactionBegin(context, Arrays.asList(data), dbDialect);
+                                JdbcTemplate template = dbDialect.getJdbcTemplate();
+                                int affect = template.update(data.getSql(), new PreparedStatementSetter() {
+
+                                    public void setValues(PreparedStatement ps) throws SQLException {
+                                        doPreparedStatement(ps, dbDialect, lobCreator, data);
+                                    }
+                                });
+                                interceptor.transactionEnd(context, Arrays.asList(data), dbDialect);
+                                return affect;
+                            } finally {
+                                lobCreator.close();
+                            }
+                        }
+                    });
+                    // 更新统计信息
+                    processStat(context, data, affect, false);
+                }
+
+                result.put(ExecuteResult.SUCCESS, null);
+            } catch (DeadlockLoserDataAccessException ex) {
+                result.put(ExecuteResult.RETRY,
+                        new LoadException(ExceptionUtils.getFullStackTrace(ex),
+                        DbLoadDumper.dumpEventDatas(splitDatas)));
+            } catch (DataIntegrityViolationException ex) {
+                result.put(ExecuteResult.ERROR, new LoadException(ExceptionUtils.getFullStackTrace(ex),
+                        DbLoadDumper.dumpEventDatas(splitDatas)));
+            } catch (RuntimeException ex) {
+                result.put(ExecuteResult.ERROR, new LoadException(ExceptionUtils.getFullStackTrace(ex),
+                        DbLoadDumper.dumpEventDatas(splitDatas)));
+            } catch (Throwable ex) {
+                result.put(ExecuteResult.ERROR, new LoadException(ExceptionUtils.getFullStackTrace(ex),
+                        DbLoadDumper.dumpEventDatas(splitDatas)));
+            }
+            return result;
+        }
+
+        @Override
+        public void processStat(EventData data, DataLoadContext context) {
+            DbLoadAction.this.processStat(data, context);
         }
 
         private void doPreparedStatement(PreparedStatement ps, DbDialect dbDialect, LobCreator lobCreator,
@@ -613,30 +534,6 @@ public class DbLoadAction extends AbstractLoadAction {
                     throw ex;
                 }
             }
-        }
-
-        private void processStat(EventData data, int affect, boolean batch) {
-            if (batch && (affect < 1 && affect != Statement.SUCCESS_NO_INFO)) {
-                failedDatas.add(data); // 记录到错误的临时队列，进行重试处理
-            } else if (!batch && affect < 1) {
-                failedDatas.add(data);// 记录到错误的临时队列，进行重试处理
-            } else {
-                processedDatas.add(data); // 记录到成功的临时队列，commit也可能会失败。所以这记录也可能需要进行重试
-                DbLoadAction.this.processStat(data, context);
-            }
-        }
-
-        // 出现异常回滚了，记录一下异常记录
-        private void processFailedDatas(int index) {
-            allFailedDatas.addAll(failedDatas);// 添加失败记录
-            context.getFailedDatas().addAll(allFailedDatas);// 添加历史出错记录
-            for (; index < datas.size(); index++) { // 记录一下未处理的数据
-                context.getFailedDatas().add(datas.get(index));
-            }
-            // 这里不需要添加当前成功记录，出现异常后会rollback所有的成功记录，比如processDatas有记录，但在commit出现失败
-            // (bugfix)
-            allProcesedDatas.addAll(processedDatas);
-            context.getProcessedDatas().addAll(allProcesedDatas);// 添加历史成功记录
         }
 
     }

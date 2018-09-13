@@ -13,7 +13,7 @@ import java.util.List;
  * @author tangzhongyuan
  * @create 2018-09-10 16:10
  **/
-public class HdfsLoadContext extends DataLoadContext<EventData> {
+public class HdfsLoadContext extends DataLoadContext {
 
     private static final long serialVersionUID = -847066316546635572L;
 

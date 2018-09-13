@@ -31,7 +31,7 @@ import com.alibaba.otter.shared.etl.model.EventData;
  * @author jianghang 2011-11-1 上午11:22:45
  * @version 4.0.0
  */
-public class DbLoadContext extends DataLoadContext<EventData> {
+public class DbLoadContext extends DataLoadContext {
 
     private static final long serialVersionUID = -4851977997313104740L;
     private List<EventData>   lastProcessedDatas;                      // 上一轮的已录入的记录，可能会有多次失败需要合并多次已录入的数据

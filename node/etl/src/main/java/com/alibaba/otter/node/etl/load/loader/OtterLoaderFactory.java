@@ -42,7 +42,7 @@ import com.alibaba.otter.shared.etl.model.Identity;
 public class OtterLoaderFactory {
 
     private DataBatchLoader dataBatchLoader;
-    private LoadStatsTracker        loadStatsTracker;
+    private LoadStatsTracker loadStatsTracker;
     private StatisticsClientService statisticsClientService;
 
     public List<LoadContext> load(DbBatch dbBatch) {

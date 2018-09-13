@@ -3,9 +3,11 @@ package com.alibaba.otter.node.etl.load.loader.hdfs;
 import com.alibaba.otter.node.etl.common.datasource.DataSourceService;
 import com.alibaba.otter.node.etl.load.exception.LoadException;
 import com.alibaba.otter.node.etl.load.loader.AbstractLoadAction;
+import com.alibaba.otter.node.etl.load.loader.common.AbstractLoadWorker;
 import com.alibaba.otter.node.etl.load.loader.common.DataLoadContext;
 import com.alibaba.otter.node.etl.load.loader.common.LoadAction;
 import com.alibaba.otter.node.etl.load.loader.common.LoadDataFilter;
+import com.alibaba.otter.node.etl.load.loader.db.DbLoadDumper;
 import com.alibaba.otter.shared.common.model.config.data.DataMediaType;
 import com.alibaba.otter.shared.common.model.config.data.hdfs.HdfsDataSource;
 import com.alibaba.otter.shared.common.utils.hdfs.HDFSUtils;
@@ -15,10 +17,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.CollectionUtils;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.concurrent.Callable;
+import java.io.IOException;
+import java.util.*;
 import java.util.concurrent.Future;
 
 /**
@@ -36,6 +36,7 @@ public class HdfsLoadAction extends AbstractLoadAction {
     private int                 retry              = 3;
     private int                 retryWait          = 3000;
     private DataSourceService   hdfsDataSourceService;
+    private int batchSize                          = 30;
 
     @Override
     protected void doDdl(DataLoadContext context, List<EventData> eventDatas) {
@@ -68,14 +69,7 @@ public class HdfsLoadAction extends AbstractLoadAction {
             return ;
         }
 
-        String path;
-        //判断是否为冷数据
-        if (data.isRemedy()) {
-            path = HdfsLoadDataUtil.coldDataLoadPath(data);
-        } else {
-            path = HdfsLoadDataUtil.addDataLoadPath(data);
-        }
-
+        String path = HdfsLoadDataUtil.getDataLoadPath(data);
         String dataContent = HdfsLoadDataUtil.getTruncateData(data.getTableName());
         final HdfsDataSource dataSource = hdfsDataSourceService.getDataSource(context.getPipeline().getId(),
                 context.getDataMediaSource());
@@ -109,7 +103,7 @@ public class HdfsLoadAction extends AbstractLoadAction {
             results.add(executor.submit(new HdfsLoadWorker(context, rows, canBatch)));
         }
 
-        if (true == isPartFailed(context, totalRows, results)) {
+        if (isPartFailed(context, totalRows, results)) {
             // 尝试的内容换成phase one跑的所有数据，避免因failed datas计算错误而导致丢数据
             List<EventData> retryEventDatas = new ArrayList<EventData>();
             for (List<EventData> rows : totalRows) {
@@ -139,15 +133,11 @@ public class HdfsLoadAction extends AbstractLoadAction {
 
     }
 
-    class HdfsLoadWorker implements Callable<Exception> {
+    class HdfsLoadWorker extends AbstractLoadWorker {
 
         private DataLoadContext context;
         private List<EventData> datas;
         private boolean canBatch;
-        private List<EventData> allFailedDatas = new ArrayList<EventData>();
-        private List<EventData> allProcesedDatas = new ArrayList<EventData>();
-        private List<EventData> processedDatas = new ArrayList<EventData>();
-        private List<EventData> failedDatas = new ArrayList<EventData>();
 
         public HdfsLoadWorker(DataLoadContext context, List<EventData> datas, boolean canBatch) {
             this.context = context;
@@ -162,49 +152,57 @@ public class HdfsLoadAction extends AbstractLoadAction {
                         context.getPipeline().getId(),
                         context.getPipeline().getName()));
 
-                return doHdfsCall();
+                return doCall(context, datas, useBatch, canBatch, batchSize, retry, retryWait);
 
             } finally {
                 Thread.currentThread().setName(WORKER_NAME);
             }
         }
 
-        private Exception doHdfsCall() {
-            RuntimeException error = null;
+        @Override
+        public Map<ExecuteResult, LoadException> doCustomCall(List<EventData> splitDatas) {
+            Map<ExecuteResult, LoadException> result = new HashMap<ExecuteResult, LoadException>();
+
             final HdfsDataSource dataSource = hdfsDataSourceService.getDataSource(context.getPipeline().getId(),
                     context.getDataMediaSource());
 
-            for (EventData data : datas) {
-                String loadData = HdfsLoadDataUtil.prepareDMLLoadData(data);
-                String path;
-                //判断是否为冷数据
-                if (data.isRemedy()) {
-                    path = HdfsLoadDataUtil.coldDataLoadPath(data);
-                } else {
-                    path = HdfsLoadDataUtil.addDataLoadPath(data);
-                }
-                try {
-                    HDFSUtils.append(dataSource.getFileSystem(), path, loadData.getBytes());
-                } catch (Exception e) {
-                    throw new LoadException("#ERROR load DML operation data failuer.", e);
+            String path;
+            String loadData;
+            if (useBatch && canBatch) {
+                final EventData data = splitDatas.get(0);// 取第一条即可
+                path = HdfsLoadDataUtil.getDataLoadPath(data);
+                loadData = HdfsLoadDataUtil.batchprepareDMLLoadData(datas);
+
+                // 更新统计信息
+                for (EventData edata : splitDatas) {
+                    processStat(context, edata, 1, true);
                 }
 
-                //统计信息
-                processStat(data, 1, false);
+            } else {
+                final EventData data = splitDatas.get(0);// 直接取第一条
+                path = HdfsLoadDataUtil.getDataLoadPath(data);
+                loadData = HdfsLoadDataUtil.prepareDMLLoadData(data);
+
+                processStat(context, data, 1, false);
             }
 
-            return error;
+            try {
+                HDFSUtils.append(dataSource.getFileSystem(), path, loadData.getBytes());
+                result.put(ExecuteResult.SUCCESS, null);
+            } catch (IOException e) {
+                result.put(ExecuteResult.RETRY, new LoadException(ExceptionUtils.getFullStackTrace(e),
+                        DbLoadDumper.dumpEventDatas(splitDatas)));
+            } catch (Exception e) {
+                result.put(ExecuteResult.ERROR, new LoadException(ExceptionUtils.getFullStackTrace(e),
+                        DbLoadDumper.dumpEventDatas(splitDatas)));
+            }
+
+            return result;
         }
 
-        private void processStat(EventData data, int affect, boolean batch) {
-            if (batch && (affect < 1)) {
-                failedDatas.add(data); // 记录到错误的临时队列，进行重试处理
-            } else if (!batch && affect < 1) {
-                failedDatas.add(data);// 记录到错误的临时队列，进行重试处理
-            } else {
-                processedDatas.add(data); // 记录到成功的临时队列，commit也可能会失败。所以这记录也可能需要进行重试
-                HdfsLoadAction.super.processStat(data, context);
-            }
+        @Override
+        public void processStat(EventData data, DataLoadContext context) {
+            HdfsLoadAction.this.processStat(data, context);
         }
     }
 

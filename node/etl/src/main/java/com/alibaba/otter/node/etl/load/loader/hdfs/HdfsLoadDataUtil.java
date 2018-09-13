@@ -101,6 +101,15 @@ public class HdfsLoadDataUtil {
         throw new LoadException("# ERROR not found this event type", type.getValue());
     }
 
+    public static String batchprepareDMLLoadData(List<EventData> datas) {
+        StringBuffer sb = new StringBuffer(1024);
+        for (EventData data : datas) {
+            String curLoadData = HdfsLoadDataUtil.prepareDMLLoadData(data);
+            sb.append(curLoadData);
+        }
+        return sb.toString();
+    }
+
     public static String coldDataLoadPath(EventData data) {
         return MessageFormat.format(COLD_DATA_PATH, data.getSchemaName(),
                 DateFormatUtils.format(new Date(), "yyyyMMdd"), data.getTableName());
@@ -109,5 +118,12 @@ public class HdfsLoadDataUtil {
     public static String addDataLoadPath(EventData data) {
         return MessageFormat.format(ADD_DATA_PATH, data.getSchemaName(),
                 DateFormatUtils.format(new Date(), "yyyyMMdd"), data.getTableName());
+    }
+
+    public static String getDataLoadPath(EventData data) {
+        if (data.isRemedy()) {
+            return HdfsLoadDataUtil.coldDataLoadPath(data);
+        }
+        return HdfsLoadDataUtil.addDataLoadPath(data);
     }
 }
