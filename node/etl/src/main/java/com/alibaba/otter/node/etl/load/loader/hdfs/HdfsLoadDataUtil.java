@@ -39,17 +39,20 @@ public class HdfsLoadDataUtil {
      */
     private static final String SEP = "\001\002\n";
 
-    private static final String TRUNCATE = "truncate";
-    private static final String UPDATE = "update";
-    private static final String INSERT = "insert";
-    private static final String DELETE = "delete";
+    private static final String TRUNCATE = EventType.TRUNCATE.getValue();
+    private static final String UPDATE = EventType.UPDATE.getValue();
+    private static final String INSERT = EventType.INSERT.getValue();
+    private static final String DELETE = EventType.DELETE.getValue();
+
+    private static final String TABLENAME = "TN";
+    private static final String TIMESTAMP = "TS";
 
     public static String getTruncateData(String tableName) {
         JSONObject truncate = new JSONObject();
         JSONObject table = new JSONObject();
+        truncate.put(TIMESTAMP, System.currentTimeMillis());
         truncate.put(TRUNCATE, table);
-        table.put("timestamp", System.currentTimeMillis());
-        table.put("table", tableName);
+        table.put(TABLENAME, tableName);
         return truncate.toJSONString() + SEP;
     }
 
@@ -68,8 +71,8 @@ public class HdfsLoadDataUtil {
     private static String commonLoadData(List<EventColumn> columns, String eventType) {
         JSONObject root = new JSONObject();
         JSONObject table = new JSONObject();
+        root.put(TIMESTAMP, System.currentTimeMillis());
         root.put(eventType, table);
-        table.put("timestamp", System.currentTimeMillis());
         for (EventColumn column : columns) {
             table.put(column.getColumnName(), column.getColumnValue());
         }
